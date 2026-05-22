@@ -9,3 +9,8 @@ wheels/
 # Virtual environments
 .venv
 .env
+
+project_planning/
+.env.test
+data/uploads/
+*.log
