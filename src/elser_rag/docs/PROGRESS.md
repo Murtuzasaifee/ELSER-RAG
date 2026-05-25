@@ -29,7 +29,6 @@
 - App boots cleanly, ELSER inference endpoint deployed, indices created
 
 ## Next up
-
-- [ ] End-to-end smoke test: ingest 1 PDF, run 1 query via `/query`
-- [ ] Tune enrichment prompt if context prefix quality is low
+- [X] End-to-end smoke test: ingest 1 PDF, run 1 query via `/query`
+- [X] Tune enrichment prompt if context prefix quality is low
 - [ ] Add `pytest` integration tests for ingest + query flows
