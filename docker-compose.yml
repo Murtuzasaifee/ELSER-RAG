@@ -29,5 +29,16 @@ services:
       retries: 10
     restart: unless-stopped
 
+  kibana:
+    image: docker.elastic.co/kibana/kibana:9.0.1
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   es_data:

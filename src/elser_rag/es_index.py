@@ -149,6 +149,7 @@ class ESIndex:
         resp = await self._es.bulk(
             operations=operations,
             pipeline="elser-rag-enrichment",
+            request_timeout=300,
         )
         if resp.get("errors"):
             failed = [i for i in resp["items"] if i.get("index", {}).get("error")]

@@ -1,4 +1,4 @@
-.PHONY: help build up up-build down restart logs logs-app logs-es ps shell clean nuke
+.PHONY: help build up up-build down restart logs logs-app logs-es logs-kibana ps shell clean nuke
 
 help:
 	@echo "ELSER-RAG — Docker commands"
@@ -10,7 +10,8 @@ help:
 	@echo "  make restart     Restart app container only"
 	@echo "  make logs        Tail logs for all services"
 	@echo "  make logs-app    Tail app logs"
-	@echo "  make logs-es     Tail Elasticsearch logs"
+	@echo "  make logs-es     Tail Elasticsearch logs
+  make logs-kibana Tail Kibana logs"
 	@echo "  make ps          Show running containers"
 	@echo "  make shell       Open bash shell in app container"
 	@echo "  make clean       Remove containers, local images, volumes"
@@ -39,6 +40,9 @@ logs-app:
 
 logs-es:
 	docker compose logs -f elasticsearch
+
+logs-kibana:
+	docker compose logs -f kibana
 
 ps:
 	docker compose ps
