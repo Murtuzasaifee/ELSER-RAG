@@ -38,20 +38,50 @@ class Enricher:
         self._summary_cache: dict[str, str] = {}
 
     async def enrich_chunks(self, doc_id: str, chunks: list[Chunk]) -> list[EnrichedChunk]:
+        log = logger.bind(doc_id=doc_id)
+        log.info("enrichment_start", total_chunks=len(chunks), model=settings.openai_enrichment_model)
+
         doc_summary = await self._get_doc_summary(doc_id, chunks)
+        log.debug("doc_summary_ready", summary_len=len(doc_summary), summary_preview=doc_summary[:120])
+
         enriched: list[EnrichedChunk] = []
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks):
+            log.info(
+                "enriching_chunk",
+                progress=f"{i + 1}/{len(chunks)}",
+                chunk_id=chunk.chunk_id,
+                section=chunk.section_title,
+                token_count=chunk.token_count,
+            )
             enriched_chunk = await self._enrich_chunk(chunk, doc_summary)
+            log.debug(
+                "chunk_enriched",
+                chunk_id=chunk.chunk_id,
+                prefix_len=len(enriched_chunk.context_prefix),
+                enriched_text_len=len(enriched_chunk.enriched_text),
+                prefix_preview=enriched_chunk.context_prefix[:100],
+            )
             enriched.append(enriched_chunk)
-        logger.info("enriched_chunks", doc_id=doc_id, count=len(enriched))
+
+        log.info("enrichment_complete", total_enriched=len(enriched))
         return enriched
 
     async def _get_doc_summary(self, doc_id: str, chunks: list[Chunk]) -> str:
         if doc_id in self._summary_cache:
+            logger.debug("doc_summary_cache_hit", doc_id=doc_id)
             return self._summary_cache[doc_id]
 
-        # Use first 3 chunks as document sample
-        sample_text = "\n\n".join(c.text for c in chunks[:3])
+        sample_chunks = chunks[:3]
+        sample_text = "\n\n".join(c.text for c in sample_chunks)
+        logger.debug(
+            "doc_summary_request",
+            doc_id=doc_id,
+            sample_chunks=len(sample_chunks),
+            sample_text_len=len(sample_text),
+            model=settings.openai_enrichment_model,
+            max_tokens=300,
+        )
+
         try:
             response = await self._client.chat.completions.create(
                 model=settings.openai_enrichment_model,
@@ -63,12 +93,18 @@ class Enricher:
                 temperature=0.0,
             )
             summary = response.choices[0].message.content.strip()
+            logger.debug(
+                "doc_summary_response",
+                doc_id=doc_id,
+                summary_len=len(summary),
+                usage=response.usage.model_dump() if response.usage else None,
+            )
         except Exception:
             logger.exception("doc_summary_failed", doc_id=doc_id)
             summary = ""
 
         self._summary_cache[doc_id] = summary
-        logger.debug("doc_summary_generated", doc_id=doc_id, length=len(summary))
+        logger.info("doc_summary_generated", doc_id=doc_id, summary_len=len(summary))
         return summary
 
     async def _enrich_chunk(self, chunk: Chunk, doc_summary: str) -> EnrichedChunk:
@@ -77,6 +113,15 @@ class Enricher:
             section_title=chunk.section_title,
             chunk_text=chunk.text,
         )
+        logger.debug(
+            "chunk_enrichment_request",
+            chunk_id=chunk.chunk_id,
+            section=chunk.section_title,
+            prompt_len=len(prompt),
+            model=settings.openai_enrichment_model,
+            max_tokens=150,
+        )
+
         try:
             response = await self._client.chat.completions.create(
                 model=settings.openai_enrichment_model,
@@ -85,6 +130,12 @@ class Enricher:
                 temperature=0.0,
             )
             context_prefix = response.choices[0].message.content.strip()
+            logger.debug(
+                "chunk_enrichment_response",
+                chunk_id=chunk.chunk_id,
+                prefix_len=len(context_prefix),
+                usage=response.usage.model_dump() if response.usage else None,
+            )
         except Exception:
             logger.exception("chunk_enrichment_failed", chunk_id=chunk.chunk_id)
             context_prefix = ""

@@ -10,8 +10,8 @@ help:
 	@echo "  make restart     Restart app container only"
 	@echo "  make logs        Tail logs for all services"
 	@echo "  make logs-app    Tail app logs"
-	@echo "  make logs-es     Tail Elasticsearch logs
-  make logs-kibana Tail Kibana logs"
+	@echo "  make logs-es     Tail Elasticsearch logs"
+	@echo "  make logs-kibana Tail Kibana logs"
 	@echo "  make ps          Show running containers"
 	@echo "  make shell       Open bash shell in app container"
 	@echo "  make clean       Remove containers, local images, volumes"

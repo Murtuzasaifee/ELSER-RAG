@@ -17,9 +17,9 @@ logger = structlog.get_logger(__name__)
 
 
 def parse_pdf(pdf_path: str | Path) -> list[ParsedElement]:
-    """Parse PDF into structured elements preserving document order."""
     path = Path(pdf_path)
-    logger.info("parsing_pdf", path=str(path), filename=path.name)
+    log = logger.bind(filename=path.name, path=str(path))
+    log.info("parsing_pdf_start")
 
     raw_elements = partition_pdf(
         filename=str(path),
@@ -27,17 +27,37 @@ def parse_pdf(pdf_path: str | Path) -> list[ParsedElement]:
         include_page_breaks=False,
     )
 
+    log.debug("raw_elements_extracted", raw_count=len(raw_elements))
+
     elements: list[ParsedElement] = []
+    skipped = 0
+    type_counts: dict[str, int] = {}
+
     for el in raw_elements:
         text = el.text.strip() if el.text else ""
         if not text:
+            skipped += 1
             continue
 
         page_num = _get_page_num(el)
         element_type = _classify(el)
+        type_counts[element_type] = type_counts.get(element_type, 0) + 1
+
+        log.debug(
+            "element_classified",
+            element_type=element_type,
+            page=page_num,
+            text_preview=text[:80],
+            text_len=len(text),
+        )
         elements.append(ParsedElement(element_type=element_type, text=text, page_num=page_num))
 
-    logger.info("pdf_parsed", filename=path.name, element_count=len(elements))
+    log.info(
+        "pdf_parsed",
+        element_count=len(elements),
+        skipped_empty=skipped,
+        by_type=type_counts,
+    )
     return elements
 
 

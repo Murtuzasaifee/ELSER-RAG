@@ -41,6 +41,7 @@ def _build_sources(chunks: list[EnrichedChunk]) -> list[SourceRef]:
                     section_title=chunk.section_title,
                 )
             )
+    logger.debug("sources_built", source_count=len(sources), unique_docs={s.doc_id for s in sources})
     return sources
 
 
@@ -53,10 +54,25 @@ class Generator:
 
     async def generate(self, query: str, chunks: list[EnrichedChunk]) -> QueryResult:
         context = _format_context(chunks)
+        logger.debug(
+            "generation_context_ready",
+            chunks_count=len(chunks),
+            context_chars=len(context),
+            model=settings.openai_model,
+            temperature=0.1,
+        )
+
         messages = [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"},
         ]
+
+        logger.info(
+            "generation_start",
+            query=query[:80],
+            chunks_used=len(chunks),
+            model=settings.openai_model,
+        )
 
         response = await self._client.chat.completions.create(
             model=settings.openai_model,
@@ -64,7 +80,19 @@ class Generator:
             temperature=0.1,
         )
         answer = response.choices[0].message.content.strip()
-        logger.info("answer_generated", query=query[:60], chunks_used=len(chunks))
+
+        logger.debug(
+            "generation_response",
+            answer_len=len(answer),
+            usage=response.usage.model_dump() if response.usage else None,
+            answer_preview=answer[:120],
+        )
+        logger.info(
+            "answer_generated",
+            query=query[:60],
+            chunks_used=len(chunks),
+            answer_len=len(answer),
+        )
 
         return QueryResult(
             answer=answer,
@@ -82,6 +110,14 @@ class Generator:
             {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"},
         ]
 
+        logger.info(
+            "stream_generation_start",
+            query=query[:80],
+            chunks_used=len(chunks),
+            model=settings.openai_model,
+        )
+
+        token_count = 0
         stream = await self._client.chat.completions.create(
             model=settings.openai_model,
             messages=messages,
@@ -91,4 +127,7 @@ class Generator:
         async for chunk in stream:
             delta = chunk.choices[0].delta.content
             if delta:
+                token_count += 1
                 yield delta
+
+        logger.info("stream_generation_complete", query=query[:60], tokens_streamed=token_count)

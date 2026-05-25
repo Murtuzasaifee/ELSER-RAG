@@ -444,9 +444,3 @@ GET elser_rag_docs/_search
   "sort": [{ "ingested_at": "desc" }]
 }
 ```
-
----
-
-## License
-
-MIT

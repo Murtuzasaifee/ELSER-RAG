@@ -1,5 +1,5 @@
 import hashlib
-import uuid
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -24,12 +24,15 @@ class RAGPipeline:
         self._enricher = Enricher()
         self._generator = Generator()
         self._retriever: Retriever | None = None
+        logger.debug("rag_pipeline_initialized")
 
     async def setup(self) -> None:
-        """Deploy ELSER, create ES indices. Call once at startup."""
+        logger.info("rag_pipeline_setup_start")
+        t0 = time.perf_counter()
         await self._es_index.setup()
         self._retriever = Retriever(self._es_index._es)
-        logger.info("rag_pipeline_ready")
+        elapsed = time.perf_counter() - t0
+        logger.info("rag_pipeline_ready", setup_elapsed_s=round(elapsed, 3))
 
     # ------------------------------------------------------------------ #
     # Ingest                                                               #
@@ -40,11 +43,28 @@ class RAGPipeline:
         doc_id = _doc_id_from_path(path)
         log = logger.bind(doc_id=doc_id, filename=path.name)
         log.info("ingest_start")
+        log.debug("doc_id_derived", filename=path.name, doc_id=doc_id)
 
+        # Stage 1: Parse
+        t0 = time.perf_counter()
         elements = parse_pdf(path)
-        chunks = chunk_document(doc_id=doc_id, elements=elements)
-        enriched_chunks = await self._enricher.enrich_chunks(doc_id=doc_id, chunks=chunks)
+        parse_elapsed = time.perf_counter() - t0
+        log.info("stage_parse_complete", element_count=len(elements), elapsed_s=round(parse_elapsed, 3))
 
+        # Stage 2: Chunk
+        t1 = time.perf_counter()
+        chunks = chunk_document(doc_id=doc_id, elements=elements)
+        chunk_elapsed = time.perf_counter() - t1
+        log.info("stage_chunk_complete", chunk_count=len(chunks), elapsed_s=round(chunk_elapsed, 3))
+
+        # Stage 3: Enrich
+        t2 = time.perf_counter()
+        enriched_chunks = await self._enricher.enrich_chunks(doc_id=doc_id, chunks=chunks)
+        enrich_elapsed = time.perf_counter() - t2
+        log.info("stage_enrich_complete", enriched_count=len(enriched_chunks), elapsed_s=round(enrich_elapsed, 3))
+
+        # Stage 4: Index
+        t3 = time.perf_counter()
         doc_summary = self._enricher._summary_cache.get(doc_id, "")
         record = DocumentRecord(
             doc_id=doc_id,
@@ -54,26 +74,42 @@ class RAGPipeline:
             chunk_count=len(enriched_chunks),
             doc_summary=doc_summary,
         )
+        log.debug("indexing_document_record", chunk_count=len(enriched_chunks), summary_len=len(doc_summary))
         await self._es_index.index_document(record)
         await self._es_index.index_chunks(enriched_chunks, filename=path.name)
+        index_elapsed = time.perf_counter() - t3
+        log.info("stage_index_complete", elapsed_s=round(index_elapsed, 3))
 
-        log.info("ingest_complete", chunk_count=len(enriched_chunks))
+        total_elapsed = time.perf_counter() - t0
+        log.info(
+            "ingest_complete",
+            chunk_count=len(enriched_chunks),
+            total_elapsed_s=round(total_elapsed, 3),
+            stage_breakdown={
+                "parse_s": round(parse_elapsed, 3),
+                "chunk_s": round(chunk_elapsed, 3),
+                "enrich_s": round(enrich_elapsed, 3),
+                "index_s": round(index_elapsed, 3),
+            },
+        )
         return IngestResult(doc_id=doc_id, filename=path.name, chunk_count=len(enriched_chunks))
 
     async def ingest_directory(self, dir_path: str | Path) -> list[IngestResult]:
         directory = Path(dir_path)
         pdfs = sorted(directory.glob("*.pdf"))
         logger.info("ingest_directory_start", path=str(directory), pdf_count=len(pdfs))
+        logger.debug("ingest_directory_files", files=[p.name for p in pdfs])
 
         results: list[IngestResult] = []
-        for pdf in pdfs:
+        for i, pdf in enumerate(pdfs):
+            logger.info("ingest_directory_progress", file=pdf.name, progress=f"{i + 1}/{len(pdfs)}")
             try:
                 result = await self.ingest_document(pdf)
                 results.append(result)
             except Exception:
                 logger.exception("ingest_document_failed", filename=pdf.name)
 
-        logger.info("ingest_directory_complete", success_count=len(results), total=len(pdfs))
+        logger.info("ingest_directory_complete", success_count=len(results), total=len(pdfs), failed=len(pdfs) - len(results))
         return results
 
     # ------------------------------------------------------------------ #
@@ -85,12 +121,29 @@ class RAGPipeline:
             raise RuntimeError("Pipeline not initialized — call setup() first")
 
         top_k = top_k or settings.bm25_top_k
-        logger.info("query_start", query=text[:80], top_k=top_k)
+        log = logger.bind(query=text[:80], top_k=top_k)
+        log.info("query_start")
 
+        t0 = time.perf_counter()
         chunks = await self._retriever.retrieve(query=text, top_k=top_k)
-        result = await self._generator.generate(query=text, chunks=chunks)
+        retrieve_elapsed = time.perf_counter() - t0
+        log.info("query_retrieve_complete", chunks_retrieved=len(chunks), elapsed_s=round(retrieve_elapsed, 3))
 
-        logger.info("query_complete", chunks_used=result.chunks_used)
+        t1 = time.perf_counter()
+        result = await self._generator.generate(query=text, chunks=chunks)
+        generate_elapsed = time.perf_counter() - t1
+        total_elapsed = time.perf_counter() - t0
+
+        log.info(
+            "query_complete",
+            chunks_used=result.chunks_used,
+            sources_count=len(result.sources),
+            total_elapsed_s=round(total_elapsed, 3),
+            stage_breakdown={
+                "retrieve_s": round(retrieve_elapsed, 3),
+                "generate_s": round(generate_elapsed, 3),
+            },
+        )
         return result
 
     # ------------------------------------------------------------------ #
@@ -98,15 +151,23 @@ class RAGPipeline:
     # ------------------------------------------------------------------ #
 
     async def delete_document(self, doc_id: str) -> int:
-        return await self._es_index.delete_document(doc_id)
+        logger.info("delete_document_start", doc_id=doc_id)
+        deleted = await self._es_index.delete_document(doc_id)
+        logger.info("delete_document_complete", doc_id=doc_id, chunks_deleted=deleted)
+        return deleted
 
     async def list_documents(self):
-        return await self._es_index.list_documents()
+        logger.debug("list_documents_called")
+        docs = await self._es_index.list_documents()
+        logger.debug("list_documents_result", count=len(docs))
+        return docs
 
     async def health(self) -> dict:
+        logger.debug("health_check_called")
         return await self._es_index.health()
 
     async def close(self) -> None:
+        logger.info("rag_pipeline_shutdown")
         await self._es_index.close()
 
 

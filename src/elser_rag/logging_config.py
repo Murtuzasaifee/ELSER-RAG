@@ -39,6 +39,14 @@ def configure_logging(log_level: str = "INFO") -> None:
     root.handlers = [handler]
     root.setLevel(level)
 
-    # Suppress noisy third-party loggers
-    for noisy in ("elasticsearch", "httpx", "httpcore", "openai", "unstructured"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+    # At DEBUG level let elasticsearch and httpx through at INFO so ES query/response details visible.
+    # Still suppress truly noisy low-level libs.
+    if level <= logging.DEBUG:
+        logging.getLogger("elasticsearch").setLevel(logging.INFO)
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
+        logging.getLogger("openai").setLevel(logging.INFO)
+        logging.getLogger("unstructured").setLevel(logging.WARNING)
+    else:
+        for noisy in ("elasticsearch", "httpx", "httpcore", "openai", "unstructured"):
+            logging.getLogger(noisy).setLevel(logging.WARNING)
