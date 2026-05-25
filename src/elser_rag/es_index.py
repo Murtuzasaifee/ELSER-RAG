@@ -25,7 +25,7 @@ _CHUNKS_MAPPING = {
             "chunk_id":      {"type": "keyword"},
             "doc_id":        {"type": "keyword"},
             "filename":      {"type": "keyword"},
-            "section_title": {"type": "text", "boost": 2.0},
+            "section_title": {"type": "text"},
             "chunk_text":    {"type": "text"},
             "context_prefix": {"type": "text", "index": False},
             "enriched_text": {"type": "text"},
@@ -46,45 +46,37 @@ class ESIndex:
         self._docs_index = settings.elasticsearch_docs_index
         self._chunks_index = settings.elasticsearch_chunks_index
         self._elser_model_id = settings.elser_model_id
-        # Inference pipeline ID (without OS suffix)
-        self._inference_id = ".elser-model-2"
+        self._inference_id = settings.elser_inference_id
 
     async def setup(self) -> None:
-        """Create indices and deploy ELSER inference pipeline if not present."""
-        await self._ensure_elser_deployed()
+        await self._ensure_elser_inference_endpoint()
         await self._ensure_ingest_pipeline()
         await self._ensure_index(self._docs_index, _DOCS_MAPPING)
         await self._ensure_index(self._chunks_index, _CHUNKS_MAPPING)
         logger.info("es_setup_complete")
 
-    async def _ensure_elser_deployed(self) -> None:
+    async def _ensure_elser_inference_endpoint(self) -> None:
         try:
-            resp = await self._es.ml.get_trained_models(model_id=self._elser_model_id)
-            models = resp.get("trained_model_configs", [])
-            if models:
-                logger.info("elser_model_found", model_id=self._elser_model_id)
-                await self._start_elser_deployment()
-                return
-        except Exception:
+            await self._es.inference.get(inference_id=self._inference_id)
+            logger.info("elser_inference_endpoint_exists", inference_id=self._inference_id)
+            return
+        except NotFoundError:
             pass
 
-        logger.info("deploying_elser", model_id=self._elser_model_id)
-        await self._es.ml.put_trained_model(
-            model_id=self._elser_model_id,
-            body={"input": {"field_names": ["text_field"]}},
+        logger.info("creating_elser_inference_endpoint", inference_id=self._inference_id)
+        await self._es.inference.put(
+            task_type="sparse_embedding",
+            inference_id=self._inference_id,
+            inference_config={
+                "service": "elasticsearch",
+                "service_settings": {
+                    "model_id": self._elser_model_id,
+                    "num_allocations": 1,
+                    "num_threads": 1,
+                },
+            },
         )
-        await self._start_elser_deployment()
-
-    async def _start_elser_deployment(self) -> None:
-        try:
-            await self._es.ml.start_trained_model_deployment(
-                model_id=self._elser_model_id,
-                wait_for="started",
-            )
-            logger.info("elser_deployed", model_id=self._elser_model_id)
-        except Exception as exc:
-            # Already started or allocation exists — not fatal
-            logger.warning("elser_deploy_skipped", reason=str(exc))
+        logger.info("elser_inference_endpoint_created", inference_id=self._inference_id)
 
     async def _ensure_ingest_pipeline(self) -> None:
         pipeline_id = "elser-rag-enrichment"
@@ -102,7 +94,7 @@ class ESIndex:
                 "processors": [
                     {
                         "inference": {
-                            "model_id": self._elser_model_id,
+                            "model_id": self._inference_id,
                             "input_output": [
                                 {
                                     "input_field": "enriched_text",
@@ -179,13 +171,11 @@ class ESIndex:
         return [DocumentRecord(**hit["_source"]) for hit in resp["hits"]["hits"]]
 
     async def delete_document(self, doc_id: str) -> int:
-        # Delete doc metadata
         try:
             await self._es.delete(index=self._docs_index, id=doc_id)
         except NotFoundError:
             pass
 
-        # Delete all chunks for this doc
         resp = await self._es.delete_by_query(
             index=self._chunks_index,
             body={"query": {"term": {"doc_id": doc_id}}},
@@ -197,17 +187,13 @@ class ESIndex:
     async def health(self) -> dict:
         cluster = await self._es.cluster.health()
         try:
-            model_resp = await self._es.ml.get_trained_models_stats(model_id=self._elser_model_id)
-            deployment_state = (
-                model_resp["trained_model_stats"][0]
-                .get("deployment_stats", {})
-                .get("state", "unknown")
-            )
+            await self._es.inference.get(inference_id=self._inference_id)
+            elser_state = "deployed"
         except Exception:
-            deployment_state = "not_deployed"
+            elser_state = "not_deployed"
         return {
             "cluster_status": cluster["status"],
-            "elser_state": deployment_state,
+            "elser_state": elser_state,
         }
 
     async def close(self) -> None:

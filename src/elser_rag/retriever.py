@@ -13,7 +13,7 @@ class Retriever:
     def __init__(self, es: AsyncElasticsearch) -> None:
         self._es = es
         self._chunks_index = settings.elasticsearch_chunks_index
-        self._inference_id = ".elser-model-2"
+        self._inference_id = settings.elser_inference_id
 
     async def retrieve(self, query: str, top_k: int | None = None) -> list[EnrichedChunk]:
         top_k = top_k or settings.bm25_top_k

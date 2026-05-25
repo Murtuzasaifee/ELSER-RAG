@@ -23,8 +23,7 @@ def parse_pdf(pdf_path: str | Path) -> list[ParsedElement]:
 
     raw_elements = partition_pdf(
         filename=str(path),
-        strategy="hi_res",
-        infer_table_structure=True,
+        strategy="fast",
         include_page_breaks=False,
     )
 

@@ -12,11 +12,12 @@ services:
     restart: unless-stopped
 
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.0.1
     environment:
       - xpack.security.enabled=false
       - discovery.type=single-node
       - ES_JAVA_OPTS=-Xms1g -Xmx1g
+      - xpack.license.self_generated.type=trial
     volumes:
       - es_data:/usr/share/elasticsearch/data
     ports:

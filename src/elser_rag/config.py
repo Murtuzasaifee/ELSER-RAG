@@ -14,7 +14,8 @@ class Settings(BaseSettings):
     elasticsearch_url: str = "http://elasticsearch:9200"
     elasticsearch_docs_index: str = "elser_rag_docs"
     elasticsearch_chunks_index: str = "elser_rag_chunks"
-    elser_model_id: str = ".elser-model-2-linux-x86_64"
+    elser_model_id: str = ".elser_model_2"
+    elser_inference_id: str = "elser-rag-inference"
 
     # Ingest
     pdf_upload_dir: str = "/data/uploads"
